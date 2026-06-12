@@ -527,16 +527,19 @@ class OasisProfileGenerator:
         
         for attempt in range(max_attempts):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
+                kwargs = {
+                    "model": self.model_name,
+                    "messages": [
                         {"role": "system", "content": self._get_system_prompt(is_individual)},
                         {"role": "user", "content": prompt}
                     ],
-                    response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # 每次重试降低温度
+                    "response_format": {"type": "json_object"},
                     # 不设置max_tokens，让LLM自由发挥
-                )
+                }
+                # OpenAI推理模型（gpt-5/o系列）不支持自定义temperature
+                if not getattr(self, "_temperature_unsupported", False):
+                    kwargs["temperature"] = 0.7 - (attempt * 0.1)  # 每次重试降低温度
+                response = self.client.chat.completions.create(**kwargs)
                 
                 content = response.choices[0].message.content
                 
@@ -570,7 +573,14 @@ class OasisProfileGenerator:
                     last_error = je
                     
             except Exception as e:
-                logger.warning(f"LLM调用失败 (attempt {attempt+1}): {str(e)[:80]}")
+                error_text = str(e)
+                if (not getattr(self, "_temperature_unsupported", False)
+                        and "temperature" in error_text
+                        and ("unsupported" in error_text.lower() or "not support" in error_text.lower())):
+                    self._temperature_unsupported = True
+                    logger.warning("当前模型不支持自定义temperature，已自动移除该参数后重试")
+                    continue
+                logger.warning(f"LLM调用失败 (attempt {attempt+1}): {error_text[:80]}")
                 last_error = e
                 import time
                 time.sleep(1 * (attempt + 1))  # 指数退避

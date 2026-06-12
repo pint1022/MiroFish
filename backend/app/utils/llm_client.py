@@ -6,7 +6,7 @@ LLM客户端封装
 import json
 import re
 from typing import Optional, Dict, Any, List
-from openai import OpenAI
+from openai import OpenAI, BadRequestError
 
 from ..config import Config
 
@@ -31,6 +31,11 @@ class LLMClient:
             api_key=self.api_key,
             base_url=self.base_url
         )
+
+        # OpenAI推理模型（gpt-5/o系列）要求 max_completion_tokens 且不支持自定义 temperature；
+        # 首次遇到对应400错误后自动切换并记住，兼容其他OpenAI格式服务商
+        self._use_max_completion_tokens = False
+        self._temperature_unsupported = False
     
     def chat(
         self,
@@ -51,21 +56,51 @@ class LLMClient:
         Returns:
             模型响应文本
         """
-        kwargs = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-        
-        if response_format:
-            kwargs["response_format"] = response_format
-        
-        response = self.client.chat.completions.create(**kwargs)
-        content = response.choices[0].message.content
-        # 部分模型（如MiniMax M2.5）会在content中包含<think>思考内容，需要移除
-        content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
-        return content
+        token_budget = max_tokens
+        for _ in range(5):
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+            }
+            if not self._temperature_unsupported:
+                kwargs["temperature"] = temperature
+            if self._use_max_completion_tokens:
+                # 推理模型的思考token也计入预算，需要远大于期望输出长度的预算
+                kwargs["max_completion_tokens"] = max(token_budget, 16384)
+            else:
+                kwargs["max_tokens"] = token_budget
+
+            if response_format:
+                kwargs["response_format"] = response_format
+
+            try:
+                response = self.client.chat.completions.create(**kwargs)
+            except BadRequestError as e:
+                error_text = str(e)
+                if not self._use_max_completion_tokens and "max_completion_tokens" in error_text:
+                    self._use_max_completion_tokens = True
+                    continue
+                if not self._temperature_unsupported and "temperature" in error_text and (
+                    "unsupported" in error_text.lower() or "not support" in error_text.lower()
+                ):
+                    self._temperature_unsupported = True
+                    continue
+                raise
+
+            content = response.choices[0].message.content or ""
+            finish_reason = response.choices[0].finish_reason
+
+            # 推理模型可能把预算全部耗在思考上，返回空内容，加倍预算重试
+            if not content.strip() and finish_reason == "length":
+                token_budget = max(token_budget, 16384) * 2
+                continue
+
+            # 部分模型（如MiniMax M2.5）会在content中包含<think>思考内容，需要移除
+            return re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
+
+        raise RuntimeError(
+            f"LLM返回空内容（模型 {self.model} 的思考token耗尽了输出预算，已重试多次）"
+        )
     
     def chat_json(
         self,
