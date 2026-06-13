@@ -18,6 +18,7 @@ from ..models.task import TaskManager, TaskStatus
 from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
 from .text_processor import TextProcessor
 from ..utils.locale import t, get_locale, set_locale
+from .graphiti_client import GraphitiClient
 
 
 @dataclass
@@ -44,6 +45,12 @@ class GraphBuilderService:
     """
     
     def __init__(self, api_key: Optional[str] = None):
+        self.provider = Config.GRAPH_PROVIDER
+        if self.provider == "graphiti":
+            self.client = GraphitiClient()
+            self.task_manager = TaskManager()
+            return
+
         self.api_key = api_key or Config.ZEP_API_KEY
         if not self.api_key:
             raise ValueError("ZEP_API_KEY 未配置")
@@ -161,6 +168,7 @@ class GraphBuilderService:
             )
             
             self._wait_for_episodes(
+                graph_id,
                 episode_uuids,
                 lambda msg, prog: self.task_manager.update_task(
                     task_id,
@@ -192,6 +200,9 @@ class GraphBuilderService:
     
     def create_graph(self, name: str) -> str:
         """创建Zep图谱（公开方法）"""
+        if self.provider == "graphiti":
+            return self.client.create_graph(name)
+
         graph_id = f"mirofish_{uuid.uuid4().hex[:16]}"
         
         self.client.graph.create(
@@ -204,6 +215,10 @@ class GraphBuilderService:
     
     def set_ontology(self, graph_id: str, ontology: Dict[str, Any]):
         """设置图谱本体（公开方法）"""
+        if self.provider == "graphiti":
+            # Graphiti's local API extracts entities dynamically from messages.
+            return
+
         import warnings
         from typing import Optional
         from pydantic import Field
@@ -314,14 +329,25 @@ class GraphBuilderService:
                     progress
                 )
             
-            # 构建episode数据
-            episodes = [
-                EpisodeData(data=chunk, type="text")
-                for chunk in batch_chunks
-            ]
-            
-            # 发送到Zep
             try:
+                if self.provider == "graphiti":
+                    episode_uuids.extend(
+                        self.client.add_texts(
+                            graph_id,
+                            batch_chunks,
+                            source_description="MiroFish graph build",
+                        )
+                    )
+                    time.sleep(1)
+                    continue
+
+                # 构建episode数据
+                episodes = [
+                    EpisodeData(data=chunk, type="text")
+                    for chunk in batch_chunks
+                ]
+
+                # 发送到Zep
                 batch_result = self.client.graph.add_batch(
                     graph_id=graph_id,
                     episodes=episodes
@@ -346,11 +372,20 @@ class GraphBuilderService:
     
     def _wait_for_episodes(
         self,
+        graph_id: str,
         episode_uuids: List[str],
         progress_callback: Optional[Callable] = None,
         timeout: int = 600
     ):
         """等待所有 episode 处理完成（通过查询每个 episode 的 processed 状态）"""
+        if self.provider == "graphiti":
+            if progress_callback:
+                progress_callback(t('progress.waitingEpisodes', count=len(episode_uuids)), 0)
+            self.client.wait_for_episodes(graph_id=graph_id, expected_count=len(episode_uuids), timeout=timeout)
+            if progress_callback:
+                progress_callback(t('progress.processingComplete', completed=len(episode_uuids), total=len(episode_uuids)), 1.0)
+            return
+
         if not episode_uuids:
             if progress_callback:
                 progress_callback(t('progress.noEpisodesWait'), 1.0)
@@ -402,6 +437,22 @@ class GraphBuilderService:
     
     def _get_graph_info(self, graph_id: str) -> GraphInfo:
         """获取图谱信息"""
+        if self.provider == "graphiti":
+            nodes = self.client.get_all_nodes(graph_id)
+            edges = self.client.get_all_edges(graph_id)
+            entity_types = {
+                label
+                for node in nodes
+                for label in (node.get("labels") or [])
+                if label not in ["Entity", "Node"]
+            }
+            return GraphInfo(
+                graph_id=graph_id,
+                node_count=len(nodes),
+                edge_count=len(edges),
+                entity_types=list(entity_types),
+            )
+
         # 获取节点（分页）
         nodes = fetch_all_nodes(self.client, graph_id)
 
@@ -433,6 +484,17 @@ class GraphBuilderService:
         Returns:
             包含nodes和edges的字典，包括时间信息、属性等详细数据
         """
+        if self.provider == "graphiti":
+            nodes_data = self.client.get_all_nodes(graph_id)
+            edges_data = self.client.get_all_edges(graph_id)
+            return {
+                "graph_id": graph_id,
+                "nodes": nodes_data,
+                "edges": edges_data,
+                "node_count": len(nodes_data),
+                "edge_count": len(edges_data),
+            }
+
         nodes = fetch_all_nodes(self.client, graph_id)
         edges = fetch_all_edges(self.client, graph_id)
 
@@ -502,5 +564,9 @@ class GraphBuilderService:
     
     def delete_graph(self, graph_id: str):
         """删除图谱"""
+        if self.provider == "graphiti":
+            self.client.delete_graph(graph_id)
+            return
+
         self.client.graph.delete(graph_id=graph_id)
 

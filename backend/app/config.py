@@ -31,9 +31,21 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    LLM_TIMEOUT_SECONDS = float(os.environ.get('LLM_TIMEOUT_SECONDS', '120'))
     
+    # 图谱提供方配置
+    GRAPH_PROVIDER = os.environ.get('GRAPH_PROVIDER', 'zep').lower()
+
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+
+    # Local Graphiti / Neo4j 配置
+    GRAPHITI_BASE_URL = os.environ.get('GRAPHITI_BASE_URL', 'http://127.0.0.1:6100')
+    GRAPHITI_INGEST_TIMEOUT_SECONDS = int(os.environ.get('GRAPHITI_INGEST_TIMEOUT_SECONDS', '120'))
+    NEO4J_HTTP_URL = os.environ.get('NEO4J_HTTP_URL', 'http://127.0.0.1:7474')
+    NEO4J_DATABASE = os.environ.get('NEO4J_DATABASE', 'neo4j')
+    NEO4J_USER = os.environ.get('NEO4J_USER', 'neo4j')
+    NEO4J_PASSWORD = os.environ.get('NEO4J_PASSWORD', '')
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
@@ -69,7 +81,9 @@ class Config:
         errors: list[str] = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY 未配置")
-        if not cls.ZEP_API_KEY:
+        if cls.GRAPH_PROVIDER == 'zep' and not cls.ZEP_API_KEY:
             errors.append("ZEP_API_KEY 未配置")
+        if cls.GRAPH_PROVIDER == 'graphiti' and not cls.NEO4J_PASSWORD:
+            errors.append("NEO4J_PASSWORD 未配置")
         return errors
 

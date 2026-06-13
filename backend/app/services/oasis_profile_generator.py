@@ -22,6 +22,7 @@ from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, get_locale, set_locale, t
 from .zep_entity_reader import EntityNode, ZepEntityReader
+from .graphiti_client import GraphitiClient
 
 logger = get_logger('mirofish.oasis_profile')
 
@@ -195,15 +196,23 @@ class OasisProfileGenerator:
         
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            timeout=Config.LLM_TIMEOUT_SECONDS
         )
         
-        # Zep客户端用于检索丰富上下文
+        self.provider = Config.GRAPH_PROVIDER
+
+        # 图谱客户端用于检索丰富上下文
         self.zep_api_key = zep_api_key or Config.ZEP_API_KEY
         self.zep_client = None
         self.graph_id = graph_id
-        
-        if self.zep_api_key:
+
+        if self.provider == "graphiti":
+            try:
+                self.zep_client = GraphitiClient()
+            except Exception as e:
+                logger.warning(f"Graphiti客户端初始化失败: {e}")
+        elif self.zep_api_key:
             try:
                 self.zep_client = Zep(api_key=self.zep_api_key)
             except Exception as e:
@@ -315,6 +324,25 @@ class OasisProfileGenerator:
             return results
         
         comprehensive_query = t('progress.zepSearchQuery', name=entity_name)
+
+        if self.provider == "graphiti":
+            try:
+                search_result = self.zep_client.search(
+                    self.graph_id,
+                    comprehensive_query,
+                    limit=15,
+                    scope="both",
+                )
+                results["facts"] = search_result.get("facts", [])
+                results["node_summaries"] = [
+                    f"{node.get('name', '')}: {node.get('summary', '')}"
+                    for node in search_result.get("nodes", [])
+                    if node.get("summary")
+                ]
+                return results
+            except Exception as e:
+                logger.warning(f"Graphiti检索失败 ({entity_name}): {e}")
+                return results
         
         def search_edges():
             """搜索边（事实/关系）- 带重试机制"""

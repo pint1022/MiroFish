@@ -29,7 +29,8 @@ class LLMClient:
         
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            timeout=Config.LLM_TIMEOUT_SECONDS
         )
 
         # OpenAI推理模型（gpt-5/o系列）要求 max_completion_tokens 且不支持自定义 temperature；

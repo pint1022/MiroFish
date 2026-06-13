@@ -17,6 +17,7 @@ from zep_cloud.client import Zep
 from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.locale import get_locale, set_locale
+from .graphiti_client import GraphitiClient
 
 logger = get_logger('mirofish.zep_graph_memory_updater')
 
@@ -238,12 +239,17 @@ class ZepGraphMemoryUpdater:
             api_key: Zep API Key（可选，默认从配置读取）
         """
         self.graph_id = graph_id
-        self.api_key = api_key or Config.ZEP_API_KEY
-        
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY未配置")
-        
-        self.client = Zep(api_key=self.api_key)
+        self.provider = Config.GRAPH_PROVIDER
+        if self.provider == "graphiti":
+            self.api_key = None
+            self.client = GraphitiClient()
+        else:
+            self.api_key = api_key or Config.ZEP_API_KEY
+
+            if not self.api_key:
+                raise ValueError("ZEP_API_KEY未配置")
+
+            self.client = Zep(api_key=self.api_key)
         
         # 活动队列
         self._activity_queue: Queue = Queue()
@@ -411,11 +417,18 @@ class ZepGraphMemoryUpdater:
         # 带重试的发送
         for attempt in range(self.MAX_RETRIES):
             try:
-                self.client.graph.add(
-                    graph_id=self.graph_id,
-                    type="text",
-                    data=combined_text
-                )
+                if self.provider == "graphiti":
+                    self.client.add_texts(
+                        self.graph_id,
+                        [combined_text],
+                        source_description=f"MiroFish {platform} simulation",
+                    )
+                else:
+                    self.client.graph.add(
+                        graph_id=self.graph_id,
+                        type="text",
+                        data=combined_text
+                    )
                 
                 self._total_sent += 1
                 self._total_items_sent += len(activities)

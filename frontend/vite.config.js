@@ -5,6 +5,7 @@ import path from 'path'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
+  envDir: path.resolve(__dirname, '..'),
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
@@ -14,6 +15,7 @@ export default defineConfig({
   server: {
     port: 3000,
     open: true,
+    allowedHosts: ['eng2.basecamptech.net'],
     proxy: {
       '/api': {
         target: 'http://localhost:5001',
