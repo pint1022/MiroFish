@@ -15,6 +15,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ..config import Config
+from ..utils.logger import get_logger
+
+
+logger = get_logger('mirofish.graphiti')
 
 
 class GraphitiClient:
@@ -92,6 +96,7 @@ class GraphitiClient:
         return f"mirofish_{uuid.uuid4().hex[:16]}"
 
     def add_texts(self, graph_id: str, texts: List[str], source_description: str = "MiroFish") -> List[str]:
+        logger.info(f"Graphiti ingest: group_id={graph_id}, messages={len(texts)}, source={source_description}")
         now = datetime.now(timezone.utc).isoformat()
         episode_ids = [str(uuid.uuid4()) for _ in texts]
         messages = [
@@ -121,19 +126,17 @@ class GraphitiClient:
             return
 
         effective_timeout = min(timeout, Config.GRAPHITI_INGEST_TIMEOUT_SECONDS)
+        logger.info(f"Graphiti wait: group_id={graph_id}, expected_count={expected_count}, timeout={effective_timeout}s")
         deadline = time.time() + effective_timeout
         while time.time() < deadline:
-            try:
-                episodes = self._request_json(
-                    f"{self.graphiti_base_url}/episodes/{graph_id}?last_n={expected_count}",
-                    method="GET",
-                    timeout=15,
-                )
-                if isinstance(episodes, list) and len(episodes) >= expected_count:
-                    return
-            except Exception:
-                pass
+            if self._has_completed_ingest_signal(graph_id, expected_count):
+                logger.info(f"Graphiti wait complete: group_id={graph_id}")
+                return
             time.sleep(3)
+
+        if self._has_completed_ingest_signal(graph_id, expected_count):
+            logger.info(f"Graphiti wait complete: group_id={graph_id}")
+            return
 
         node_count = self.cypher(
             "MATCH (n) WHERE n.group_id = $graph_id RETURN count(n) AS count",
@@ -145,6 +148,37 @@ class GraphitiClient:
             f"(Neo4j nodes for group: {node_count}). Check the Graphiti API worker logs; "
             "the /messages async ingest worker may not be persisting to Neo4j."
         )
+
+    def _has_completed_ingest_signal(self, graph_id: str, expected_count: int) -> bool:
+        try:
+            episodes = self._request_json(
+                f"{self.graphiti_base_url}/episodes/{graph_id}?last_n={expected_count}",
+                method="GET",
+                timeout=15,
+            )
+            if isinstance(episodes, list) and len(episodes) >= expected_count:
+                return True
+        except Exception:
+            pass
+
+        try:
+            node_count = self.cypher(
+                "MATCH (n) WHERE n.group_id = $graph_id RETURN count(n) AS count",
+                {"graph_id": graph_id},
+            )[0]["count"]
+            if node_count > 0:
+                return True
+        except Exception:
+            pass
+
+        try:
+            search_result = self.search(graph_id, "MiroFish graph build", limit=1, scope="edges")
+            if search_result.get("facts") or search_result.get("edges") or search_result.get("nodes"):
+                return True
+        except Exception:
+            pass
+
+        return False
 
     def search(self, graph_id: str, query: str, limit: int = 10, scope: str = "edges") -> Dict[str, Any]:
         try:

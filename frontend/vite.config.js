@@ -13,7 +13,7 @@ export default defineConfig({
     }
   },
   server: {
-    port: 3000,
+    port: 5000,
     open: true,
     allowedHosts: ['eng2.basecamptech.net'],
     proxy: {

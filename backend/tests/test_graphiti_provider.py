@@ -97,6 +97,22 @@ def test_graphiti_wait_reports_unpersisted_messages(monkeypatch):
         raise AssertionError("Expected Graphiti ingest timeout")
 
 
+def test_graphiti_wait_completes_when_search_returns_facts(monkeypatch):
+    monkeypatch.setattr(Config, "GRAPHITI_INGEST_TIMEOUT_SECONDS", 0, raising=False)
+    monkeypatch.setattr(Config, "NEO4J_PASSWORD", "test", raising=False)
+
+    client = GraphitiClient(neo4j_password="test")
+    monkeypatch.setattr(client, "_request_json", lambda *_, **__: [])
+    monkeypatch.setattr(client, "cypher", lambda *_, **__: [{"count": 0}])
+    monkeypatch.setattr(
+        client,
+        "search",
+        lambda *_, **__: {"facts": ["Graphiti has facts"], "edges": [], "nodes": [], "query": "test"},
+    )
+
+    client.wait_for_episodes("mirofish_test", 1, timeout=10)
+
+
 def test_entity_reader_uses_graphiti_without_zep_key(monkeypatch):
     _enable_graphiti(monkeypatch)
     monkeypatch.setattr(zep_entity_reader, "GraphitiClient", FakeGraphitiClient, raising=False)
@@ -106,6 +122,31 @@ def test_entity_reader_uses_graphiti_without_zep_key(monkeypatch):
 
     assert result.filtered_count == 1
     assert result.entities[0].name == "Alice"
+
+
+def test_entity_reader_keeps_graphiti_generic_entity_nodes(monkeypatch):
+    _enable_graphiti(monkeypatch)
+
+    class GenericEntityGraphitiClient(FakeGraphitiClient):
+        def get_all_nodes(self, graph_id):
+            return [
+                {
+                    "uuid": "node-1",
+                    "name": "NICH",
+                    "labels": ["Entity"],
+                    "summary": "A graphiti generic entity",
+                    "attributes": {},
+                }
+            ]
+
+    monkeypatch.setattr(zep_entity_reader, "GraphitiClient", GenericEntityGraphitiClient, raising=False)
+
+    reader = zep_entity_reader.ZepEntityReader()
+    result = reader.filter_defined_entities("mirofish_test", defined_entity_types=["ChipStartup"])
+
+    assert result.filtered_count == 1
+    assert result.entity_types == {"Entity"}
+    assert result.entities[0].name == "NICH"
 
 
 def test_tools_search_uses_graphiti_without_zep_key(monkeypatch):

@@ -407,10 +407,19 @@ def build_graph():
                     progress=10
                 )
                 graph_id = builder.create_graph(name=graph_name)
+                build_logger.info(f"[{task_id}] 使用图谱ID: {graph_id}")
                 
                 # 更新项目的graph_id
                 project.graph_id = graph_id
                 ProjectManager.save_project(project)
+                task_manager.update_task(
+                    task_id,
+                    progress_detail={
+                        "project_id": project_id,
+                        "graph_id": graph_id,
+                        "chunk_count": total_chunks,
+                    }
+                )
                 
                 # 设置本体
                 task_manager.update_task(
@@ -446,7 +455,13 @@ def build_graph():
                 task_manager.update_task(
                     task_id,
                     message=t('progress.waitingZepProcess'),
-                    progress=55
+                    progress=55,
+                    progress_detail={
+                        "project_id": project_id,
+                        "graph_id": graph_id,
+                        "chunk_count": total_chunks,
+                        "episode_count": len(episode_uuids),
+                    }
                 )
                 
                 def wait_progress_callback(msg, progress_ratio):

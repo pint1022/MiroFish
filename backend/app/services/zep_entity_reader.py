@@ -45,10 +45,12 @@ class EntityNode:
         }
     
     def get_entity_type(self) -> Optional[str]:
-        """获取实体类型（排除默认的Entity标签）"""
+        """获取实体类型；Graphiti 通用节点允许返回 Entity。"""
         for label in self.labels:
             if label not in ["Entity", "Node"]:
                 return label
+        if "Entity" in self.labels:
+            return "Entity"
         return None
 
 
@@ -241,8 +243,9 @@ class ZepEntityReader:
         筛选出符合预定义实体类型的节点
         
         筛选逻辑：
-        - 如果节点的Labels只有一个"Entity"，说明这个实体不符合我们预定义的类型，跳过
-        - 如果节点的Labels包含除"Entity"和"Node"之外的标签，说明符合预定义类型，保留
+        - Zep 模式下，如果节点的 Labels 只有一个 "Entity"，说明这个实体不符合预定义类型，跳过
+        - Graphiti 模式下，节点可能只有通用 "Entity" 标签，此时仍保留用于后续模拟
+        - 如果节点的 Labels 包含除 "Entity" 和 "Node" 之外的标签，说明符合预定义类型，保留
         
         Args:
             graph_id: 图谱ID
@@ -274,18 +277,22 @@ class ZepEntityReader:
             # 筛选逻辑：Labels必须包含除"Entity"和"Node"之外的标签
             custom_labels = [l for l in labels if l not in ["Entity", "Node"]]
             
-            if not custom_labels:
-                # 只有默认标签，跳过
-                continue
-            
-            # 如果指定了预定义类型，检查是否匹配
-            if defined_entity_types:
-                matching_labels = [l for l in custom_labels if l in defined_entity_types]
-                if not matching_labels:
-                    continue
-                entity_type = matching_labels[0]
+            if custom_labels:
+                # 如果指定了预定义类型，检查是否匹配
+                if defined_entity_types:
+                    matching_labels = [l for l in custom_labels if l in defined_entity_types]
+                    if not matching_labels:
+                        continue
+                    entity_type = matching_labels[0]
+                else:
+                    entity_type = custom_labels[0]
+            elif self.provider == "graphiti" and "Entity" in labels:
+                # Graphiti 的本地 ingest 可能不会把 ontology 类型写入 labels，
+                # 但这些通用 Entity 节点仍可作为模拟 Agent 的来源。
+                entity_type = "Entity"
             else:
-                entity_type = custom_labels[0]
+                # Zep 的默认 Entity/Node 标签不代表业务实体，跳过。
+                continue
             
             entity_types_found.add(entity_type)
             

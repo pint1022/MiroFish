@@ -440,6 +440,7 @@ class SimulationManager:
             
             # 更新状态
             state.status = SimulationStatus.READY
+            state.error = None
             self._save_simulation_state(state)
             
             logger.info(f"模拟准备完成: {simulation_id}, "
